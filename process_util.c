@@ -95,6 +95,11 @@ void* get_remote_func_address(pid_t target_pid, const char* module_name,void* lo
 		return NULL;
 
 	  /*目标进程函数地址= 目标进程lib库地址 + （本进程函数地址 -本进程lib库地址）*/
-	void * ret_addr = (void *) ((uint32_t) remote_handle + (uint32_t) local_addr - (uint32_t) local_handle);
+	void * ret_addr = (void *) ((uintptr_t) remote_handle + (uintptr_t) local_addr - (uintptr_t) local_handle);
+#if defined(__i386__)
+	if (!strcmp(module_name, libc_path)) {
+		ret_addr += 2;
+	}
+#endif
 	return ret_addr;
 }
