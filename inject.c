@@ -119,6 +119,7 @@ out_munmap:
 	}
 out_setregs:
 	ptrace_setregs(target_pid, &original_regs);
+	LOGD("Process<%d>: reset regs\n", target_pid);
 out_detach:
 	ptrace_detach(target_pid);
 

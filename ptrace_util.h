@@ -30,7 +30,7 @@
 
 int ptrace_readdata(pid_t pid, const uint8_t *src, const uint8_t *buf, size_t size);
 int ptrace_writedata(pid_t pid, const uint8_t *dest, const uint8_t *data, size_t size);
-int ptrace_call(pid_t pid, uint32_t addr, const long *params, uint32_t num_params, struct pt_regs* regs);
+int ptrace_call(pid_t pid, uintptr_t addr, long *params, int num_params, struct pt_regs* regs);
 int ptrace_getregs(pid_t pid, const struct pt_regs * regs);
 int ptrace_setregs(pid_t pid, const struct pt_regs * regs);
 int ptrace_continue(pid_t pid);

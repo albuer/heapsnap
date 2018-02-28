@@ -5,7 +5,8 @@
 
 extern const char *libc_path;
 
-long ptrace_retval(struct pt_regs * regs) {
+long ptrace_retval(struct pt_regs * regs)
+{
 #if defined(__arm__) || defined(__aarch64__)
     return regs->ARM_r0;
 #elif defined(__i386__)
@@ -15,7 +16,8 @@ long ptrace_retval(struct pt_regs * regs) {
 #endif
 }
 
-long ptrace_ip(struct pt_regs * regs) {
+long ptrace_ip(struct pt_regs * regs)
+{
 #if defined(__arm__) || defined(__aarch64__)
     return regs->ARM_pc;
 #elif defined(__i386__)
@@ -27,7 +29,7 @@ long ptrace_ip(struct pt_regs * regs) {
 
 int ptrace_readdata(pid_t pid, const uint8_t *src, const uint8_t *buf, size_t size)
 {
-    uint32_t i, j, remain;
+    long i, j, remain;
     uint8_t *laddr;
     const size_t bytes_width = sizeof(long);
 
@@ -57,7 +59,7 @@ int ptrace_readdata(pid_t pid, const uint8_t *src, const uint8_t *buf, size_t si
 
 int ptrace_writedata(pid_t pid, const uint8_t *dest, const uint8_t *data, size_t size)
 {
-    uint32_t i, j, remain;
+    long i, j, remain;
     const uint8_t *laddr;
     const size_t bytes_width = sizeof(long);
 
@@ -91,9 +93,9 @@ int ptrace_writedata(pid_t pid, const uint8_t *dest, const uint8_t *data, size_t
 }
 
 #if defined(__arm__) || defined(__aarch64__)
-int ptrace_call(pid_t pid, uint32_t addr, const long *params, uint32_t num_params, struct pt_regs* regs)
+int ptrace_call(pid_t pid, uintptr_t addr, long *params, int num_params, struct pt_regs* regs)
 {
-    uint32_t i;
+    int i;
 #if defined(__arm__)
     int num_param_registers = 4;
 #elif defined(__aarch64__)

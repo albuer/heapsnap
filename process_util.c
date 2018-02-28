@@ -67,7 +67,7 @@ void* get_lib_adress(pid_t pid, const char* module_name) {
 			//在所有的映射行中寻找目标动态库所在的行
 			if (strstr(line, module_name)) {
 				pch = strtok(line, "-");
-				addr = strtoul(pch, NULL, 16);
+				addr = strtoull(pch, NULL, 16);
 
 				if (addr == 0x8000)
 					addr = 0;
