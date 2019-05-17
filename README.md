@@ -26,6 +26,7 @@ adb shell chmod 0777 /data/local/tmp/heap_snap
 * 通过adb或者串口登陆目标机器，开启malloc调试，并重启目标进程
 ```shell
 setprop libc.debug.malloc 1
+setprop libc.debug.malloc.options backtrace
 stop;start
 [执行你的应用]
 ```
@@ -33,10 +34,10 @@ stop;start
 ```
 /data/local/tmp/heapsnap -p <pid> -l /data/local/tmp/libheapsnap.so
 ```
-* 通过signal 21获取目标进程的heap信息，并自动保存在/data/local/tmp/heap_snap/目录下
+* 通过signal 21获取目标进程的heap信息，并自动保存在/data/local/tmp/heap_snap/目录下  
 `kill -21 [pid]`
-* 多次在不同时间点获取目标进程的heap信息，并对这些heap信息进行比对，从而找出异常的内存分配
-* 也可以选择在加载动态库时直接执行动态库中的函数保存heap信息，然后马上关闭动态库．以后每次获取heap信息都需要调用相同的命令：
+* 多次在不同时间点获取目标进程的heap信息，并对这些heap信息进行比对，从而找出异常的内存分配  
+* 也可以选择在加载动态库时直接执行动态库中的函数保存heap信息，然后马上关闭动态库．以后每次获取heap信息都需要调用相同的命令：  
 ```
 /data/local/tmp/heapsnap -p <pid> -l /data/local/tmp/libheapsnap.so -o -f heapsnap_save
 ```
