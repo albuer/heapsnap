@@ -180,7 +180,7 @@ long ptrace_call(pid_t pid, uintptr_t addr, long *params, int num_params, struct
 
 int ptrace_getregs(pid_t pid, const struct pt_regs * regs) {
 #if defined (__aarch64__)
-    int regset = NT_PRSTATUS;
+    long regset = NT_PRSTATUS;
     struct iovec ioVec;
 
     ioVec.iov_base = regs;
@@ -202,7 +202,7 @@ int ptrace_getregs(pid_t pid, const struct pt_regs * regs) {
 
 int ptrace_setregs(pid_t pid, const struct pt_regs * regs) {
 #if defined (__aarch64__)
-    int regset = NT_PRSTATUS;
+    long regset = NT_PRSTATUS;
     struct iovec ioVec;
 
     ioVec.iov_base = regs;

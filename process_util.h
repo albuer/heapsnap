@@ -3,6 +3,7 @@
 #include <sys/types.h>
 #include <dirent.h>
 #include "log_util.h"
+#include <string.h>
 
 /**
  * 根据进程名称查找进程ID
