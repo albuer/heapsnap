@@ -7,11 +7,19 @@
 #define MMAP_SIZE	0x400
 
 #if defined(__aarch64__)
-const char *libc_path = "/system/lib64/libc.so";
-const char *linker_path = "/system/bin/linker64";
+	const char *libc_path = "/system/lib64/libc.so";
+	#if (PLATFORM_VERSION<10)
+	const char *linker_path = "/system/bin/linker64";
+	#else
+	const char *linker_path = "/system/lib64/libdl.so";
+	#endif
 #else
-const char *libc_path = "/system/lib/libc.so";
-const char *linker_path = "/system/bin/linker";
+	const char *libc_path = "/system/lib/libc.so";
+	#if (PLATFORM_VERSION<10)
+	const char *linker_path = "/system/bin/linker";
+	#else
+	const char *linker_path = "/system/lib/libdl.so";
+	#endif
 #endif
 static int s_oneshot = 0;
 
@@ -40,6 +48,8 @@ int inject_remote_process(pid_t target_pid, const char *library_path,
 	uint8_t *target_mmap_base = NULL;
 	void * target_so_handle = NULL;
 	void * hook_func_addr = NULL;
+
+	LOGI("libc_path:%s\nlinker_path:%s\n", libc_path, linker_path);
 
 	LOGI("Attach process<%d>%s.\n", target_pid, s_oneshot?" at oneshot mode":"");
 

@@ -9,13 +9,15 @@
 #include <ctype.h>
 #include <sys/cdefs.h>
 #include <android/log.h>
+#include <malloc.h>
+#include <bionic_malloc.h>
 
 #define TAG                         "heapsnap"
-#define VERION                      "v0.2"
+#define VERION                      "v1.0"
 #define DEFAULT_HEAPSNAP_SIG        SIGTTIN
-#define HEPA_SNAP_PATH              "/data/local/tmp/heap_snap"
+#define HEPA_SNAP_PATH              "/sdcard/heap_snap"
 
-#undef HEAPSNAP_DEBUG
+#define HEAPSNAP_DEBUG
 
 #define info_log(...)                                             \
     do {                                                          \
@@ -35,168 +37,30 @@
 #define dbg_log(...)
 #endif
 
-#if defined(__LP64__)
-#define PAD_PTR "016" PRIxPTR
-#else
-#define PAD_PTR "08" PRIxPTR
-#endif
-#define BACKTRACE_SIZE      32
-#define SIZE_FLAG_ZYGOTE_CHILD  (1<<31)
-
-
+#if (PLATFORM_VERSION<10)
 extern "C" void get_malloc_leak_info(uint8_t** info, size_t* overallSize,
         size_t* infoSize, size_t* totalMemory, size_t* backtraceSize);
 extern "C" void free_malloc_leak_info(uint8_t* info);
-extern "C" char* __cxa_demangle(const char* mangled, char* buf, size_t* len,
-                                int* status);
+#else
+typedef bool (*ANDROID_MALLOPT)(int opcode, void* arg, size_t arg_size);
+#endif
+extern std::string backtrace_string(const uintptr_t* frames, size_t frame_count);
+
+typedef struct {
+    // Pointer to the buffer allocated by a call
+    uint8_t* buffer;
+    // The size of the "info" buffer.
+    size_t overall_size;
+    // The size of a single entry.
+    size_t info_size;
+    // The sum of all allocations that have been tracked. Does not include
+    // any heap overhead.
+    size_t total_memory;
+    // The maximum number of backtrace entries.
+    size_t backtrace_size;
+} hs_malloc_leak_info_t;
 
 static pid_t myPid = 0;
-static int save_f = 1;
-
-/* mapinfo */
-
-struct mapinfo_t {
-  struct mapinfo_t* next;
-  uintptr_t start;
-  uintptr_t end;
-  char name[];
-};
-
-static mapinfo_t* s_map_info = NULL;
-
-// Format of /proc/<PID>/maps:
-//   6f000000-6f01e000 rwxp 00000000 00:0c 16389419   /system/lib/libcomposer.so
-static mapinfo_t* parse_maps_line(char* line) {
-  uintptr_t start;
-  uintptr_t end;
-  int name_pos;
-  if (sscanf(line, "%" PRIxPTR "-%" PRIxPTR " %*4s %*x %*x:%*x %*d%n", &start,
-             &end, &name_pos) < 2) {
-    return NULL;
-  }
-
-  while (isspace(line[name_pos])) {
-    name_pos += 1;
-  }
-  const char* name = line + name_pos;
-  size_t name_len = strlen(name);
-  if (name_len && name[name_len - 1] == '\n') {
-    name_len -= 1;
-  }
-
-  mapinfo_t* mi = reinterpret_cast<mapinfo_t*>(calloc(1, sizeof(mapinfo_t) + name_len + 1));
-  if (mi) {
-    mi->start = start;
-    mi->end = end;
-    memcpy(mi->name, name, name_len);
-    mi->name[name_len] = '\0';
-  }
-  return mi;
-}
-
-static mapinfo_t* mapinfo_create(pid_t pid) {
-  struct mapinfo_t* milist = NULL;
-  char data[1024]; // Used to read lines as well as to construct the filename.
-  snprintf(data, sizeof(data), "/proc/%d/maps", pid);
-  FILE* fp = fopen(data, "r");
-  if (fp != NULL) {
-    while (fgets(data, sizeof(data), fp) != NULL) {
-      mapinfo_t* mi = parse_maps_line(data);
-      if (mi) {
-        mi->next = milist;
-        milist = mi;
-      }
-    }
-    fclose(fp);
-  }
-  return milist;
-}
-
-static void mapinfo_destroy(mapinfo_t* mi) {
-  while (mi != NULL) {
-    mapinfo_t* del = mi;
-    mi = mi->next;
-    free(del);
-  }
-}
-
-// Find the containing map info for the PC.
-static const mapinfo_t* mapinfo_find(mapinfo_t* mi, uintptr_t pc, uintptr_t* rel_pc) {
-  for (; mi != NULL; mi = mi->next) {
-    if ((pc >= mi->start) && (pc < mi->end)) {
-      *rel_pc = pc - mi->start;
-      return mi;
-    }
-  }
-  *rel_pc = pc;
-  return NULL;
-}
-
-static void dump_backtrace_symbols(FILE *fp, uintptr_t* frames, size_t frame_count) {
-  for (size_t i = 0 ; i < frame_count; ++i) {
-    uintptr_t offset = 0;
-    const char* symbol = NULL;
-
-    Dl_info info;
-    if (dladdr((void*) frames[i], &info) != 0) {
-      offset = reinterpret_cast<uintptr_t>(info.dli_saddr);
-      symbol = info.dli_sname;
-    }
-
-    uintptr_t rel_pc = offset;
-    const mapinfo_t* mi = (s_map_info != NULL) ? mapinfo_find(s_map_info, frames[i], &rel_pc) : NULL;
-    const char* soname = (mi != NULL) ? mi->name : info.dli_fname;
-    if (soname == NULL) {
-      soname = "<unknown>";
-    }
-    if (symbol != NULL) {
-      // TODO: we might need a flag to say whether it's safe to allocate (demangling allocates).
-      char* demangled_symbol = __cxa_demangle(symbol, NULL, NULL, NULL);
-      const char* best_name = (demangled_symbol != NULL) ? demangled_symbol : symbol;
-
-      fprintf(fp, "          #%02zd  pc %" PAD_PTR "  %s (%s+%" PRIuPTR ")\n",
-                        i, rel_pc, soname, best_name, frames[i] - offset);
-
-      free(demangled_symbol);
-    } else {
-      fprintf(fp, "          #%02zd  pc %" PAD_PTR "  %s\n",
-                        i, rel_pc, soname);
-    }
-  }
-}
-
-static int compareHeapRecords(const void* vrec1, const void* vrec2)
-{
-    const size_t* rec1 = (const size_t*) vrec1;
-    const size_t* rec2 = (const size_t*) vrec2;
-    size_t size1 = *rec1;
-    size_t size2 = *rec2;
-
-    if (size1 < size2) {
-        return 1;
-    } else if (size1 > size2) {
-        return -1;
-    }
-
-    intptr_t* bt1 = (intptr_t*)(rec1 + 2);
-    intptr_t* bt2 = (intptr_t*)(rec2 + 2);
-    for (size_t idx = 0; idx < BACKTRACE_SIZE; idx++) {
-        intptr_t addr1 = bt1[idx];
-        intptr_t addr2 = bt2[idx];
-        if (addr1 == addr2) {
-            if (addr1 == 0)
-                break;
-            continue;
-        }
-        if (addr1 < addr2) {
-            return -1;
-        } else if (addr1 > addr2) {
-            return 1;
-        }
-    }
-
-    return 0;
-}
 
 static int write_maps(const char* mapFile, FILE* dest)
 {
@@ -238,111 +102,139 @@ static int write_maps(const char* mapFile, FILE* dest)
     return 0;
 }
 
-static FILE* heapsnap_getfile()
+/*
+ * fp_tra: file to save heap has been translate info
+ * fp_org: file to save heap org info
+ */
+static bool heapsnap_getfile2(FILE** fp_tra, FILE** fp_org)
 {
     size_t FILENAME_SIZE = 1024;
     char fileName[FILENAME_SIZE];
     char filename_heap[FILENAME_SIZE];
-    char filename_maps[FILENAME_SIZE];
-    FILE* fp_heap = stdout;
+    char filename_org_heap[FILENAME_SIZE];
 
-    if (save_f) {
-    	int fno = 0;
-	    if (access(HEPA_SNAP_PATH, 0) == -1) {
-	        info_log("create directory: %s\n", HEPA_SNAP_PATH);
-	        if (mkdir(HEPA_SNAP_PATH, 0775) < 0) {
-	            err_log("create directory failed: %s!\n", HEPA_SNAP_PATH);
-	            return NULL;
-	        }
-	    }
-        while(1) {
-    	    snprintf(fileName, FILENAME_SIZE-1, "%s/proc_%d_%04d", HEPA_SNAP_PATH, myPid, fno);
-    	    snprintf(filename_heap, FILENAME_SIZE-1, "%s.heap", fileName);
-            if (access(filename_heap, 0) < 0)
-                break;
-            ++fno;
+    int fno = 0;
+    if (access(HEPA_SNAP_PATH, 0) == -1) {
+        info_log("create directory: %s\n", HEPA_SNAP_PATH);
+        if (mkdir(HEPA_SNAP_PATH, 0766) < 0) {
+            err_log("create directory failed: %s!\n", HEPA_SNAP_PATH);
+            return false;
         }
-        fp_heap = fopen(filename_heap, "w+");
-        if(fp_heap == NULL)
-        {
-            err_log("Open file failed: %s!\n", filename_heap);
-            return NULL;
-        }
-        info_log("Save process heap to file: %s\n", filename_heap);
     }
-    return fp_heap;
+    while(1) {
+        snprintf(fileName, FILENAME_SIZE-1, "%s/proc_%d_%04d", HEPA_SNAP_PATH, myPid, fno);
+        snprintf(filename_heap, FILENAME_SIZE-1, "%s.heap", fileName);
+        if (access(filename_heap, 0) < 0)
+            break;
+        ++fno;
+    }
+
+    *fp_tra = fopen(filename_heap, "w");
+    if (*fp_tra == NULL)
+        err_log("Open file failed: %s!\n", filename_heap);
+    else 
+        info_log("Save process's heap to file: %s\n", filename_heap);
+
+    snprintf(filename_org_heap, FILENAME_SIZE-1, "%s.org.heap", fileName);
+    *fp_org = fopen(filename_org_heap, "w");
+    if(*fp_org == NULL)
+        err_log("Open file failed: %s!\n", filename_org_heap);
+    else
+        info_log("Save process's org heap to file: %s\n", filename_org_heap);
+
+    return true;
 }
 
-extern "C" void heapsnap_save(void)
+static bool get_malloc_info(hs_malloc_leak_info_t* leak_info)
 {
-    size_t FILENAME_SIZE = 1024;
-    uint8_t* info = NULL;
-    size_t overallSize, infoSize, totalMemory, backtraceSize;
-    char buf[1024] = "";
+#if (PLATFORM_VERSION<10)
+    get_malloc_leak_info(&leak_info->buffer, &leak_info->overall_size, &leak_info->info_size,
+            &leak_info->total_memory, &leak_info->backtrace_size);
+#else
+    if (!android_mallopt(M_GET_MALLOC_LEAK_INFO, leak_info, sizeof(*inleak_infofo))) {
+      return false;
+    }
+#endif
 
-    get_malloc_leak_info(&info, &overallSize, &infoSize, &totalMemory,
-        &backtraceSize);
-    if (info == NULL || infoSize==0 || (overallSize % infoSize)) {
-        err_log("PID(%d): heap is empty\n", myPid);
-        return;
+    if (leak_info.buffer == nullptr || leak_info.overall_size == 0 || leak_info.info_size == 0
+            || (leak_info.overall_size / leak_info.info_size) == 0) {
+        info_log("no malloc info, libc.debug.malloc property should be set");
+        return false;
     }
 
-    FILE *fp = heapsnap_getfile();
-    if (fp == NULL) {
-        err_log("PID(%d): open failed: %d!\n", myPid, errno);
-        return;
+    return true;
+}
+
+static void free_malloc_info(hs_malloc_leak_info_t* info)
+{
+#if (PLATFORM_VERSION<10)
+    free_malloc_leak_info(info->buffer);
+#else
+    android_mallopt(M_FREE_MALLOC_LEAK_INFO, info, sizeof(*info));
+#endif
+}
+
+static void save_original_info(hs_malloc_leak_info_t *leak_info, FILE* fp)
+{
+    // dump original heap info
+    if (android_mallopt(M_WRITE_MALLOC_LEAK_INFO_TO_FILE, fp, sizeof(FILE*))) {
+        info_log("Native heap dump complete.\n");
+    } else {
+        err_log("Failed to write native heap dump to file");
     }
+    fclose(fp);
+}
 
-    fprintf(fp, "Heap Snapshot %s\n\n", VERION);
+static void save_demangle_info(hs_malloc_leak_info_t *leak_info, FILE* fp)
+{
+    size_t count = leak_info->overall_size / leak_info->info_size;
 
-    size_t recordCount = overallSize / infoSize;
-    fprintf(fp, "Total memory: %zu\n", totalMemory);
-    fprintf(fp, "Allocation records: %zd\n", recordCount);
-    if (backtraceSize != BACKTRACE_SIZE) {
-        err_log("PID(%d): mismatched backtrace sizes (%d vs. %d)\n",
-            myPid, backtraceSize, BACKTRACE_SIZE);
+    fprintf(fp, "%zu bytes in %zu allocations\n", leak_info->total_memory, count);
+
+    // The memory is sorted based on total size which is useful for finding
+    // worst memory offenders. For diffs, sometimes it is preferable to sort
+    // based on the backtrace.
+    for (size_t i = 0; i < count; i++) {
+        struct AllocEntry {
+            size_t size;  // bit 31 is set if this is zygote allocated memory
+            size_t allocations;
+            uintptr_t backtrace[];
+        };
+
+        const AllocEntry * const e = (AllocEntry *)(leak_info->buffer + i * leak_info->info_size);
+
+        fprintf(fp, "%zu bytes ( %zu bytes * %zu allocations )\n", e->size * e->allocations,
+                e->size, e->allocations);
+        std::string str = backtrace_string(e->backtrace, leak_info->backtrace_size);
+        fprintf(fp, "%s\n", str.c_str());
     }
     fprintf(fp, "\n");
 
-    /* re-sort the entries */
-    qsort(info, recordCount, infoSize, compareHeapRecords);
-
-    s_map_info = mapinfo_create(myPid);
-
-    /* dump the entries to the file */
-    const uint8_t* ptr = info;
-    for (size_t idx = 0; idx < recordCount; idx++) {
-        size_t size = *(size_t*) ptr;
-        size_t allocations = *(size_t*) (ptr + sizeof(size_t));
-        intptr_t* backtrace = (intptr_t*) (ptr + sizeof(size_t) * 2);
-        size_t bt = 0;
-
-        fprintf(fp, "size %8i, dup %4i", size & ~SIZE_FLAG_ZYGOTE_CHILD, allocations);
-        for (bt = 0; bt < backtraceSize; bt++) {
-            if (backtrace[bt] == 0) {
-                break;
-            } else {
-                fprintf(fp, ", 0x%08x", backtrace[bt]);
-            }
-        }
-        fprintf(fp, "\n");
-
-        dump_backtrace_symbols(fp, (uintptr_t*)backtrace, bt);
-
-        ptr += infoSize;
-    }
-
-    mapinfo_destroy(s_map_info);
-    free_malloc_leak_info(info);
     char target_maps[128];
     snprintf(target_maps, 127, "/proc/%d/maps", myPid);
     info_log("Save maps(%s)\n", target_maps);
     write_maps(target_maps, fp);
+
     fclose(fp);
+}
+
+extern "C" void heapsnap_save(void)
+{
+    hs_malloc_leak_info_t leak_info;
+    FILE *fp_tra = NULL;
+    FILE *fp_org = NULL;
+    heapsnap_getfile2(&fp_tra, &fp_org);
+
+    if (fp_tra==NULL && fp_org==NULL)
+        return;
+
+    if (!get_malloc_info(&leak_info))
+        return;
+
+    save_original_info(&leak_info, fp_org);
+    save_demangle_info(&leak_info, fp_tra);
 
     info_log("Done.\n");
-
-    return;
 }
 
 static void heapsnap_signal_handler(int sig)
