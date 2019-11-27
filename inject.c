@@ -7,18 +7,18 @@
 #define MMAP_SIZE	0x400
 
 #if defined(__aarch64__)
-	const char *libc_path = "/system/lib64/libc.so";
+	const char *libc_path = "libc.so";
 	#if (PLATFORM_VERSION<10)
-	const char *linker_path = "/system/bin/linker64";
+	const char *linker_path = "linker64";
 	#else
-	const char *linker_path = "/system/lib64/libdl.so";
+	const char *linker_path = "libdl.so";
 	#endif
 #else
-	const char *libc_path = "/system/lib/libc.so";
+	const char *libc_path = "libc.so";
 	#if (PLATFORM_VERSION<10)
-	const char *linker_path = "/system/bin/linker";
+	const char *linker_path = "linker";
 	#else
-	const char *linker_path = "/system/lib/libdl.so";
+	const char *linker_path = "libdl.so";
 	#endif
 #endif
 static int s_oneshot = 0;

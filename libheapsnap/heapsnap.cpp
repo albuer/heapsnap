@@ -11,6 +11,7 @@
 #include <android/log.h>
 #include <malloc.h>
 #include <bionic_malloc.h>
+#include <malloc_debug/backtrace.h>
 
 #define TAG                         "heapsnap"
 #define VERION                      "v1.0"
@@ -37,16 +38,9 @@
 #define dbg_log(...)
 #endif
 
-#if (PLATFORM_VERSION<10)
-extern "C" void get_malloc_leak_info(uint8_t** info, size_t* overallSize,
-        size_t* infoSize, size_t* totalMemory, size_t* backtraceSize);
-extern "C" void free_malloc_leak_info(uint8_t* info);
-#else
-typedef bool (*ANDROID_MALLOPT)(int opcode, void* arg, size_t arg_size);
-#endif
-extern std::string backtrace_string(const uintptr_t* frames, size_t frame_count);
+#define SIZE_FLAG_ZYGOTE_CHILD  (1<<31)
 
-typedef struct {
+typedef struct _hs_malloc_leak_info_t {
     // Pointer to the buffer allocated by a call
     uint8_t* buffer;
     // The size of the "info" buffer.
@@ -61,64 +55,28 @@ typedef struct {
 } hs_malloc_leak_info_t;
 
 static pid_t myPid = 0;
+static size_t gNumBacktraceElements;
 
-static int write_maps(const char* mapFile, FILE* dest)
-{
-    size_t READ_BLOCK_SIZE = 4096;
-    FILE* src = fopen(mapFile, "r");
-    if(src == NULL)
-    {
-        err_log("Open source file failed: %s!", mapFile);
-        return -1;
-    }
+#if (PLATFORM_VERSION<10)
+extern "C" void get_malloc_leak_info(uint8_t** info, size_t* overallSize,
+        size_t* infoSize, size_t* totalMemory, size_t* backtraceSize);
+extern "C" void free_malloc_leak_info(uint8_t* info);
+#endif
+std::string backtrace_string(const uintptr_t* frames, size_t frame_count);
 
-    if(dest == NULL)
-    {
-        err_log("Invalid dest file!");
-        fclose(src);
-        return -1;
-    }
-    char buffer[READ_BLOCK_SIZE];
-
-    fseek(dest, 0, SEEK_END);
-    sprintf(buffer, "\r\n******** MAPS ********\r\n\r\n");
-    fwrite(buffer, 1, strlen(buffer), dest);
-    buffer[0] = 0;
-    int readNum = 0;
-    while(!feof(src))
-    {
-        readNum = fread(buffer, 1, READ_BLOCK_SIZE, src);
-        if(readNum > 0)
-        {
-            fwrite(buffer, 1, readNum, dest);
-        }
-        else
-        {
-            err_log("Read error, readNum=%d, errno=%d", readNum, errno);
-            break;
-        }
-    }
-    fclose(src);
-    return 0;
-}
-
-/*
- * fp_tra: file to save heap has been translate info
- * fp_org: file to save heap org info
- */
-static bool heapsnap_getfile2(FILE** fp_tra, FILE** fp_org)
+static FILE* heapsnap_getfile()
 {
     size_t FILENAME_SIZE = 1024;
     char fileName[FILENAME_SIZE];
     char filename_heap[FILENAME_SIZE];
-    char filename_org_heap[FILENAME_SIZE];
+    FILE* fp_heap = NULL;
 
     int fno = 0;
     if (access(HEPA_SNAP_PATH, 0) == -1) {
         info_log("create directory: %s\n", HEPA_SNAP_PATH);
-        if (mkdir(HEPA_SNAP_PATH, 0766) < 0) {
+        if (mkdir(HEPA_SNAP_PATH, 0775) < 0) {
             err_log("create directory failed: %s!\n", HEPA_SNAP_PATH);
-            return false;
+            return NULL;
         }
     }
     while(1) {
@@ -128,21 +86,15 @@ static bool heapsnap_getfile2(FILE** fp_tra, FILE** fp_org)
             break;
         ++fno;
     }
-
-    *fp_tra = fopen(filename_heap, "w");
-    if (*fp_tra == NULL)
+    fp_heap = fopen(filename_heap, "w+");
+    if(fp_heap == NULL)
+    {
         err_log("Open file failed: %s!\n", filename_heap);
-    else 
-        info_log("Save process's heap to file: %s\n", filename_heap);
+        return NULL;
+    }
+    info_log("Save process heap to file: %s\n", filename_heap);
 
-    snprintf(filename_org_heap, FILENAME_SIZE-1, "%s.org.heap", fileName);
-    *fp_org = fopen(filename_org_heap, "w");
-    if(*fp_org == NULL)
-        err_log("Open file failed: %s!\n", filename_org_heap);
-    else
-        info_log("Save process's org heap to file: %s\n", filename_org_heap);
-
-    return true;
+    return fp_heap;
 }
 
 static bool get_malloc_info(hs_malloc_leak_info_t* leak_info)
@@ -151,13 +103,13 @@ static bool get_malloc_info(hs_malloc_leak_info_t* leak_info)
     get_malloc_leak_info(&leak_info->buffer, &leak_info->overall_size, &leak_info->info_size,
             &leak_info->total_memory, &leak_info->backtrace_size);
 #else
-    if (!android_mallopt(M_GET_MALLOC_LEAK_INFO, leak_info, sizeof(*inleak_infofo))) {
+    if (!android_mallopt(M_GET_MALLOC_LEAK_INFO, leak_info, sizeof(*leak_info))) {
       return false;
     }
 #endif
 
-    if (leak_info.buffer == nullptr || leak_info.overall_size == 0 || leak_info.info_size == 0
-            || (leak_info.overall_size / leak_info.info_size) == 0) {
+    if (leak_info->buffer == nullptr || leak_info->overall_size == 0 || leak_info->info_size == 0
+            || (leak_info->overall_size / leak_info->info_size) == 0) {
         info_log("no malloc info, libc.debug.malloc property should be set");
         return false;
     }
@@ -174,65 +126,113 @@ static void free_malloc_info(hs_malloc_leak_info_t* info)
 #endif
 }
 
-static void save_original_info(hs_malloc_leak_info_t *leak_info, FILE* fp)
+static int compareHeapRecords(const void* vrec1, const void* vrec2)
 {
-    // dump original heap info
-    if (android_mallopt(M_WRITE_MALLOC_LEAK_INFO_TO_FILE, fp, sizeof(FILE*))) {
-        info_log("Native heap dump complete.\n");
-    } else {
-        err_log("Failed to write native heap dump to file");
+    const size_t* rec1 = (const size_t*) vrec1;
+    const size_t* rec2 = (const size_t*) vrec2;
+    size_t size1 = *rec1;
+    size_t size2 = *rec2;
+
+    if (size1 < size2) {
+        return 1;
+    } else if (size1 > size2) {
+        return -1;
     }
-    fclose(fp);
+
+    uintptr_t* bt1 = (uintptr_t*)(rec1 + 2);
+    uintptr_t* bt2 = (uintptr_t*)(rec2 + 2);
+    for (size_t idx = 0; idx < gNumBacktraceElements; idx++) {
+        uintptr_t addr1 = bt1[idx];
+        uintptr_t addr2 = bt2[idx];
+        if (addr1 == addr2) {
+            if (addr1 == 0)
+                break;
+            continue;
+        }
+        if (addr1 < addr2) {
+            return -1;
+        } else if (addr1 > addr2) {
+            return 1;
+        }
+    }
+
+    return 0;
 }
 
 static void save_demangle_info(hs_malloc_leak_info_t *leak_info, FILE* fp)
 {
-    size_t count = leak_info->overall_size / leak_info->info_size;
+    size_t recordCount = leak_info->overall_size/leak_info->info_size;
 
-    fprintf(fp, "%zu bytes in %zu allocations\n", leak_info->total_memory, count);
-
-    // The memory is sorted based on total size which is useful for finding
-    // worst memory offenders. For diffs, sometimes it is preferable to sort
-    // based on the backtrace.
-    for (size_t i = 0; i < count; i++) {
-        struct AllocEntry {
-            size_t size;  // bit 31 is set if this is zygote allocated memory
-            size_t allocations;
-            uintptr_t backtrace[];
-        };
-
-        const AllocEntry * const e = (AllocEntry *)(leak_info->buffer + i * leak_info->info_size);
-
-        fprintf(fp, "%zu bytes ( %zu bytes * %zu allocations )\n", e->size * e->allocations,
-                e->size, e->allocations);
-        std::string str = backtrace_string(e->backtrace, leak_info->backtrace_size);
-        fprintf(fp, "%s\n", str.c_str());
-    }
+    fprintf(fp, "Heap Snapshot %s\n\n", VERION);
+    fprintf(fp, "Total memory: %zu\n", leak_info->total_memory);
+    fprintf(fp, "Allocation records: %zd\n", recordCount);
+    fprintf(fp, "Backtrace size: %zd\n", leak_info->backtrace_size);
     fprintf(fp, "\n");
 
-    char target_maps[128];
-    snprintf(target_maps, 127, "/proc/%d/maps", myPid);
-    info_log("Save maps(%s)\n", target_maps);
-    write_maps(target_maps, fp);
+    /* re-sort the entries */
+    gNumBacktraceElements = leak_info->backtrace_size;
+    qsort(leak_info->buffer, recordCount, leak_info->info_size, compareHeapRecords);
 
+    /* dump the entries to the file */
+    const uint8_t* ptr = leak_info->buffer;
+    for (size_t idx = 0; idx < recordCount; idx++) {
+        size_t size = *(size_t*) ptr;
+        size_t allocations = *(size_t*) (ptr + sizeof(size_t));
+        uintptr_t* backtrace = (uintptr_t*) (ptr + sizeof(size_t) * 2);
+
+        fprintf(fp, "z %d  sz %8zu  num %4zu  bt",
+                (size & SIZE_FLAG_ZYGOTE_CHILD) != 0,
+                size & ~SIZE_FLAG_ZYGOTE_CHILD,
+                allocations);
+        for (size_t bt = 0; bt < leak_info->backtrace_size; bt++) {
+            if (backtrace[bt] == 0) {
+                break;
+            } else {
+#ifdef __LP64__
+                fprintf(fp, " %016" PRIxPTR, backtrace[bt]);
+#else
+                fprintf(fp, " %08" PRIxPTR, backtrace[bt]);
+#endif
+            }
+        }
+        fprintf(fp, "\n");
+
+        std::string str = backtrace_string(backtrace, leak_info->backtrace_size);
+        fprintf(fp, "%s\n", str.c_str());
+
+        ptr += leak_info->info_size;
+    }
+
+    fprintf(fp, "MAPS\n");
+    const char* maps = "/proc/self/maps";
+    FILE* fp_in = fopen(maps, "r");
+    if (fp_in == NULL) {
+        fprintf(fp, "Could not open %s\n", maps);
+        return;
+    }
+    char buf[BUFSIZ];
+    while (size_t n = fread(buf, sizeof(char), BUFSIZ, fp_in)) {
+        fwrite(buf, sizeof(char), n, fp);
+    }
+
+    fprintf(fp, "END\n");
     fclose(fp);
 }
 
 extern "C" void heapsnap_save(void)
 {
     hs_malloc_leak_info_t leak_info;
-    FILE *fp_tra = NULL;
-    FILE *fp_org = NULL;
-    heapsnap_getfile2(&fp_tra, &fp_org);
+    FILE *fp = heapsnap_getfile();
 
-    if (fp_tra==NULL && fp_org==NULL)
+    if (fp == NULL)
         return;
 
     if (!get_malloc_info(&leak_info))
         return;
 
-    save_original_info(&leak_info, fp_org);
-    save_demangle_info(&leak_info, fp_tra);
+    save_demangle_info(&leak_info, fp);
+
+    free_malloc_info(&leak_info);
 
     info_log("Done.\n");
 }
