@@ -177,17 +177,19 @@ static void merge_similar_entries(hs_malloc_leak_info_t *leak_info)
     const uint8_t* ptr_dst = leak_info->buffer;
     const uint8_t* ptr = ptr_dst+leak_info->info_size;
     struct info_t* info_dst = (struct info_t*)ptr_dst;
+    info_dst->allocations = 1;
     size_t count = 1;
 
     for (size_t idx = 1; idx < recordCount; idx++) {
         struct info_t* info = (struct info_t*)ptr;
         if (!memcmp(info->backtrace, info_dst->backtrace, sizeof(uintptr_t)*leak_info->backtrace_size) &&
                 info->size == info_dst->size) {
-            info_dst->allocations += info->allocations;
+            info_dst->allocations++;
         } else {
             ptr_dst += leak_info->info_size;
-            info_dst = (struct info_t*)ptr_dst;
             memcpy((void*)ptr_dst, (void*)ptr, leak_info->info_size);
+            info_dst = (struct info_t*)ptr_dst;
+            info_dst->allocations = 1;
             ++count;
         }
         ptr += leak_info->info_size;
@@ -203,7 +205,7 @@ static void demangle_and_save(hs_malloc_leak_info_t *leak_info, FILE* fp)
     gNumBacktraceElements = leak_info->backtrace_size;
     qsort(leak_info->buffer, recordCount, leak_info->info_size, compareHeapRecords);
 
-#if (PLATFORM_SDK_VERSION==26 || PLATFORM_SDK_VERSION==27)
+#if (PLATFORM_SDK_VERSION>=24 || PLATFORM_SDK_VERSION<=27)
     merge_similar_entries(leak_info);
     info_log("merge similar entries: %zu -> %zu\n", recordCount,
             leak_info->overall_size/leak_info->info_size);

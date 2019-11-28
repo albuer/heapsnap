@@ -7,7 +7,15 @@
 #define MMAP_SIZE	0x400
 
 const char *libc_path = "libc.so";
+#if (PLATFORM_SDK_VERSION<=25)
+#if defined(__aarch64__)
+const char *linker_path = "linker64";
+#else
+const char *linker_path = "linker";
+#endif /*__aarch64__*/
+#else
 const char *linker_path = "libdl.so";
+#endif /*PLATFORM_SDK_VERSION*/
 static int s_oneshot = 0;
 
 static int call_func(pid_t pid, const char* lib, void* func, long* params, int param_count, struct pt_regs* regs, long* ret)

@@ -46,7 +46,9 @@ LOCAL_C_INCLUDES :=
 LOCAL_MODULE:= libheapsnap
 #LOCAL_SHARED_LIBRARIES := libc_malloc_debug
 LOCAL_STATIC_LIBRARIES := libc_malloc_debug_backtrace
-# libdemangle
+ifeq (1,$(strip $(shell expr $(PLATFORM_SDK_VERSION) \<= 25)))
+LOCAL_STATIC_LIBRARIES += libc_logging
+endif
 LOCAL_LDLIBS := -ldl -llog
 LOCAL_CFLAGS := $(SNAP_C_FLAGS)
 LOCAL_CFLAGS += -DPLATFORM_SDK_VERSION=$(PLATFORM_SDK_VERSION)
