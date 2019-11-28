@@ -10,8 +10,11 @@
 #include <sys/cdefs.h>
 #include <android/log.h>
 #include <malloc.h>
-#include <bionic_malloc.h>
 #include <malloc_debug/backtrace.h>
+
+#if (PLATFORM_VERSION>=10)
+#include <bionic_malloc.h>
+#endif
 
 #define TAG                         "heapsnap"
 #define VERION                      "v1.0"
@@ -80,8 +83,8 @@ static FILE* heapsnap_getfile()
         }
     }
     while(1) {
-        snprintf(fileName, FILENAME_SIZE-1, "%s/proc_%d_%04d", HEPA_SNAP_PATH, myPid, fno);
-        snprintf(filename_heap, FILENAME_SIZE-1, "%s.heap", fileName);
+        snprintf(fileName, FILENAME_SIZE-1, "%s/heap_%d_%04d", HEPA_SNAP_PATH, myPid, fno);
+        snprintf(filename_heap, FILENAME_SIZE-1, "%s.txt", fileName);
         if (access(filename_heap, 0) < 0)
             break;
         ++fno;

@@ -53,7 +53,7 @@ LOCAL_CFLAGS += -DPLATFORM_VERSION=$(PLATFORM_VERSION)
 ifeq (1,$(strip $(shell expr $(PLATFORM_VERSION) \< 6)))
 LOCAL_LDLIBS += -lgccdemangle
 endif
-ifeq (1,$(strip $(shell expr $(PLATFORM_VERSION) \>= 10)))
+ifeq (1,$(strip $(shell expr $(PLATFORM_VERSION) \>= 9)))
 LOCAL_C_INCLUDES += bionic/libc
 LOCAL_C_INCLUDES += bionic/libc/private
 LOCAL_C_INCLUDES += system/core/demangle/include
