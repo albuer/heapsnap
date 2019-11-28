@@ -12,8 +12,8 @@
 #include <malloc.h>
 #include <malloc_debug/backtrace.h>
 
-#if (PLATFORM_VERSION>=10)
-#include <bionic_malloc.h>
+#if (PLATFORM_SDK_VERSION>=29)
+//#include <bionic_malloc.h>
 #endif
 
 #define TAG                         "heapsnap"
@@ -60,7 +60,7 @@ typedef struct _hs_malloc_leak_info_t {
 static pid_t myPid = 0;
 static size_t gNumBacktraceElements;
 
-#if (PLATFORM_VERSION<10)
+#if (PLATFORM_SDK_VERSION<29)
 extern "C" void get_malloc_leak_info(uint8_t** info, size_t* overallSize,
         size_t* infoSize, size_t* totalMemory, size_t* backtraceSize);
 extern "C" void free_malloc_leak_info(uint8_t* info);
@@ -92,17 +92,17 @@ static FILE* heapsnap_getfile()
     fp_heap = fopen(filename_heap, "w+");
     if(fp_heap == NULL)
     {
-        err_log("Open file failed: %s!\n", filename_heap);
+        err_log("Fail to open file: %s!\n", filename_heap);
         return NULL;
     }
-    info_log("Save process heap to file: %s\n", filename_heap);
+    info_log("Save process's heap to file: %s\n", filename_heap);
 
     return fp_heap;
 }
 
 static bool get_malloc_info(hs_malloc_leak_info_t* leak_info)
 {
-#if (PLATFORM_VERSION<10)
+#if (PLATFORM_SDK_VERSION<29)
     get_malloc_leak_info(&leak_info->buffer, &leak_info->overall_size, &leak_info->info_size,
             &leak_info->total_memory, &leak_info->backtrace_size);
 #else
@@ -113,7 +113,6 @@ static bool get_malloc_info(hs_malloc_leak_info_t* leak_info)
 
     if (leak_info->buffer == nullptr || leak_info->overall_size == 0 || leak_info->info_size == 0
             || (leak_info->overall_size / leak_info->info_size) == 0) {
-        info_log("no malloc info, libc.debug.malloc property should be set");
         return false;
     }
 
@@ -122,7 +121,7 @@ static bool get_malloc_info(hs_malloc_leak_info_t* leak_info)
 
 static void free_malloc_info(hs_malloc_leak_info_t* info)
 {
-#if (PLATFORM_VERSION<10)
+#if (PLATFORM_SDK_VERSION<29)
     free_malloc_leak_info(info->buffer);
 #else
     android_mallopt(M_FREE_MALLOC_LEAK_INFO, info, sizeof(*info));
@@ -162,19 +161,60 @@ static int compareHeapRecords(const void* vrec1, const void* vrec2)
     return 0;
 }
 
-static void save_demangle_info(hs_malloc_leak_info_t *leak_info, FILE* fp)
+static void merge_similar_entries(hs_malloc_leak_info_t *leak_info)
 {
     size_t recordCount = leak_info->overall_size/leak_info->info_size;
+    if (recordCount < 2) {
+        return;
+    }
+
+    struct info_t {
+        size_t size;
+        size_t allocations;
+        uintptr_t* backtrace;
+    };
+
+    const uint8_t* ptr_dst = leak_info->buffer;
+    const uint8_t* ptr = ptr_dst+leak_info->info_size;
+    struct info_t* info_dst = (struct info_t*)ptr_dst;
+    size_t count = 1;
+
+    for (size_t idx = 1; idx < recordCount; idx++) {
+        struct info_t* info = (struct info_t*)ptr;
+        if (!memcmp(info->backtrace, info_dst->backtrace, sizeof(uintptr_t)*leak_info->backtrace_size) &&
+                info->size == info_dst->size) {
+            info_dst->allocations += info->allocations;
+        } else {
+            ptr_dst += leak_info->info_size;
+            info_dst = (struct info_t*)ptr_dst;
+            memcpy((void*)ptr_dst, (void*)ptr, leak_info->info_size);
+            ++count;
+        }
+        ptr += leak_info->info_size;
+    }
+    leak_info->overall_size = count * leak_info->info_size;
+}
+
+static void demangle_and_save(hs_malloc_leak_info_t *leak_info, FILE* fp)
+{
+    size_t recordCount = leak_info->overall_size/leak_info->info_size;
+
+    /* re-sort the entries */
+    gNumBacktraceElements = leak_info->backtrace_size;
+    qsort(leak_info->buffer, recordCount, leak_info->info_size, compareHeapRecords);
+
+#if (PLATFORM_SDK_VERSION==26 || PLATFORM_SDK_VERSION==27)
+    merge_similar_entries(leak_info);
+    info_log("merge similar entries: %zu -> %zu\n", recordCount,
+            leak_info->overall_size/leak_info->info_size);
+    recordCount = leak_info->overall_size/leak_info->info_size;
+#endif
 
     fprintf(fp, "Heap Snapshot %s\n\n", VERION);
     fprintf(fp, "Total memory: %zu\n", leak_info->total_memory);
     fprintf(fp, "Allocation records: %zd\n", recordCount);
     fprintf(fp, "Backtrace size: %zd\n", leak_info->backtrace_size);
     fprintf(fp, "\n");
-
-    /* re-sort the entries */
-    gNumBacktraceElements = leak_info->backtrace_size;
-    qsort(leak_info->buffer, recordCount, leak_info->info_size, compareHeapRecords);
 
     /* dump the entries to the file */
     const uint8_t* ptr = leak_info->buffer;
@@ -187,7 +227,8 @@ static void save_demangle_info(hs_malloc_leak_info_t *leak_info, FILE* fp)
                 (size & SIZE_FLAG_ZYGOTE_CHILD) != 0,
                 size & ~SIZE_FLAG_ZYGOTE_CHILD,
                 allocations);
-        for (size_t bt = 0; bt < leak_info->backtrace_size; bt++) {
+        size_t bt = 0;
+        for (bt = 0; bt < leak_info->backtrace_size; bt++) {
             if (backtrace[bt] == 0) {
                 break;
             } else {
@@ -200,7 +241,7 @@ static void save_demangle_info(hs_malloc_leak_info_t *leak_info, FILE* fp)
         }
         fprintf(fp, "\n");
 
-        std::string str = backtrace_string(backtrace, leak_info->backtrace_size);
+        std::string str = backtrace_string(backtrace, bt);
         fprintf(fp, "%s\n", str.c_str());
 
         ptr += leak_info->info_size;
@@ -219,7 +260,7 @@ static void save_demangle_info(hs_malloc_leak_info_t *leak_info, FILE* fp)
     }
 
     fprintf(fp, "END\n");
-    fclose(fp);
+    fclose(fp_in);
 }
 
 extern "C" void heapsnap_save(void)
@@ -230,14 +271,25 @@ extern "C" void heapsnap_save(void)
     if (fp == NULL)
         return;
 
-    if (!get_malloc_info(&leak_info))
+    if (!get_malloc_info(&leak_info)) {
+        fprintf(fp, "Native heap dump not available. To enable, run these"
+                    " commands (requires root):\n");
+        fprintf(fp, "# adb shell stop\n");
+#if (PLATFORM_SDK_VERSION<24)
+        fprintf(fp, "# adb shell setprop libc.debug.malloc 1\n");
+#else
+        fprintf(fp, "# adb shell setprop libc.debug.malloc.options backtrace\n");
+#endif
+        fprintf(fp, "# adb shell start\n");
+        fclose(fp);
         return;
+    }
 
-    save_demangle_info(&leak_info, fp);
-
+    demangle_and_save(&leak_info, fp);
     free_malloc_info(&leak_info);
+    fclose(fp);
 
-    info_log("Done.\n");
+    info_log("PID(%d): Heap Save Done.\n", myPid);
 }
 
 static void heapsnap_signal_handler(int sig)
@@ -269,4 +321,3 @@ extern "C" void __attribute__((constructor)) prepare()
     dbg_log("prepare heapsnap\n");
     heapsnap_init();
 }
-

@@ -7,7 +7,7 @@ LOCAL_MODULE := heapsnap
 LOCAL_SRC_FILES := inject.c process_util.c ptrace_util.c
 LOCAL_LDLIBS += -L$(SYSROOT)/usr/lib -llog -ldl
 LOCAL_CFLAGS := $(SNAP_C_FLAGS)
-LOCAL_CFLAGS += -DPLATFORM_VERSION=$(PLATFORM_VERSION)
+LOCAL_CFLAGS += -DPLATFORM_SDK_VERSION=$(PLATFORM_SDK_VERSION)
 include $(BUILD_EXECUTABLE)
 
 # for 32bit
@@ -17,7 +17,7 @@ LOCAL_MODULE := heapsnap.32
 LOCAL_SRC_FILES := inject.c process_util.c ptrace_util.c
 LOCAL_LDLIBS += -L$(SYSROOT)/usr/lib -llog -ldl
 LOCAL_CFLAGS := $(SNAP_C_FLAGS)
-LOCAL_CFLAGS += -DPLATFORM_VERSION=$(PLATFORM_VERSION)
+LOCAL_CFLAGS += -DPLATFORM_SDK_VERSION=$(PLATFORM_SDK_VERSION)
 include $(BUILD_EXECUTABLE)
 
 include $(CLEAR_VARS)
@@ -49,15 +49,15 @@ LOCAL_STATIC_LIBRARIES := libc_malloc_debug_backtrace
 # libdemangle
 LOCAL_LDLIBS := -ldl -llog
 LOCAL_CFLAGS := $(SNAP_C_FLAGS)
-LOCAL_CFLAGS += -DPLATFORM_VERSION=$(PLATFORM_VERSION)
-ifeq (1,$(strip $(shell expr $(PLATFORM_VERSION) \< 6)))
+LOCAL_CFLAGS += -DPLATFORM_SDK_VERSION=$(PLATFORM_SDK_VERSION)
+ifeq (1,$(strip $(shell expr $(PLATFORM_SDK_VERSION) \< 23)))
 LOCAL_LDLIBS += -lgccdemangle
 endif
-ifeq (1,$(strip $(shell expr $(PLATFORM_VERSION) \>= 9)))
+#ifeq (1,$(strip $(shell expr $(PLATFORM_SDK_VERSION) \>= 28)))
 LOCAL_C_INCLUDES += bionic/libc
 LOCAL_C_INCLUDES += bionic/libc/private
 LOCAL_C_INCLUDES += system/core/demangle/include
 #LOCAL_LDLIBS += -lc_malloc_debug
-endif
+#endif
 LOCAL_MODULE_TAGS := optional
 include $(BUILD_SHARED_LIBRARY)
