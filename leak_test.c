@@ -15,6 +15,8 @@ int main(void)
 {
 	int count=0;
 	void * p = NULL;
+
+	printf("My PID: %d\n\n", getpid());
 	while(1) {
 		p = foo();
 		++count;

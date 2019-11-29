@@ -10,10 +10,12 @@
 #include <sys/cdefs.h>
 #include <android/log.h>
 #include <malloc.h>
+#if (PLATFORM_SDK_VERSION>=24)
 #include <malloc_debug/backtrace.h>
+#endif
 
 #if (PLATFORM_SDK_VERSION>=29)
-//#include <bionic_malloc.h>
+#include <bionic_malloc.h>
 #endif
 
 #define TAG                         "heapsnap"
@@ -43,6 +45,20 @@
 
 #define SIZE_FLAG_ZYGOTE_CHILD  (1<<31)
 
+#ifndef PRIxPTR
+#define	PRIxPTR			"x"		/* uintptr_t */
+#endif
+
+#ifndef PRIuPTR
+#define PRIuPTR                 "u"             /* uintptr_t */
+#endif
+
+#if defined(__LP64__)
+#define PAD_PTR "016" PRIxPTR
+#else
+#define PAD_PTR "08" PRIxPTR
+#endif
+
 typedef struct _hs_malloc_leak_info_t {
     // Pointer to the buffer allocated by a call
     uint8_t* buffer;
@@ -65,7 +81,123 @@ extern "C" void get_malloc_leak_info(uint8_t** info, size_t* overallSize,
         size_t* infoSize, size_t* totalMemory, size_t* backtraceSize);
 extern "C" void free_malloc_leak_info(uint8_t* info);
 #endif
-std::string backtrace_string(const uintptr_t* frames, size_t frame_count);
+
+#if (PLATFORM_SDK_VERSION<24)
+
+extern "C" char* __cxa_demangle(const char* mangled, char* buf, size_t* len,
+                                int* status);
+
+/* mapinfo */
+struct mapinfo_t {
+  struct mapinfo_t* next;
+  uintptr_t start;
+  uintptr_t end;
+  char name[];
+};
+
+static mapinfo_t* s_map_info = NULL;
+
+// Format of /proc/<PID>/maps:
+//   6f000000-6f01e000 rwxp 00000000 00:0c 16389419   /system/lib/libcomposer.so
+static mapinfo_t* parse_maps_line(char* line) {
+  uintptr_t start;
+  uintptr_t end;
+  int name_pos;
+  if (sscanf(line, "%" PRIxPTR "-%" PRIxPTR " %*4s %*x %*x:%*x %*d%n", &start,
+             &end, &name_pos) < 2) {
+    return NULL;
+  }
+
+  while (isspace(line[name_pos])) {
+    name_pos += 1;
+  }
+  const char* name = line + name_pos;
+  size_t name_len = strlen(name);
+  if (name_len && name[name_len - 1] == '\n') {
+    name_len -= 1;
+  }
+
+  mapinfo_t* mi = reinterpret_cast<mapinfo_t*>(calloc(1, sizeof(mapinfo_t) + name_len + 1));
+  if (mi) {
+    mi->start = start;
+    mi->end = end;
+    memcpy(mi->name, name, name_len);
+    mi->name[name_len] = '\0';
+  }
+  return mi;
+}
+
+static mapinfo_t* mapinfo_create(pid_t pid) {
+  struct mapinfo_t* milist = NULL;
+  char data[1024]; // Used to read lines as well as to construct the filename.
+  snprintf(data, sizeof(data), "/proc/%d/maps", pid);
+  FILE* fp = fopen(data, "r");
+  if (fp != NULL) {
+    while (fgets(data, sizeof(data), fp) != NULL) {
+      mapinfo_t* mi = parse_maps_line(data);
+      if (mi) {
+        mi->next = milist;
+        milist = mi;
+      }
+    }
+    fclose(fp);
+  }
+  return milist;
+}
+
+static void mapinfo_destroy(mapinfo_t* mi) {
+  while (mi != NULL) {
+    mapinfo_t* del = mi;
+    mi = mi->next;
+    free(del);
+  }
+}
+
+// Find the containing map info for the PC.
+static const mapinfo_t* mapinfo_find(mapinfo_t* mi, uintptr_t pc, uintptr_t* rel_pc) {
+  for (; mi != NULL; mi = mi->next) {
+    if ((pc >= mi->start) && (pc < mi->end)) {
+      *rel_pc = pc - mi->start;
+      return mi;
+    }
+  }
+  *rel_pc = pc;
+  return NULL;
+}
+
+static void dump_backtrace_symbols(FILE *fp, uintptr_t* frames, size_t frame_count) {
+  for (size_t i = 0 ; i < frame_count; ++i) {
+    uintptr_t offset = 0;
+    const char* symbol = NULL;
+
+    Dl_info info;
+    if (dladdr((void*) frames[i], &info) != 0) {
+      offset = reinterpret_cast<uintptr_t>(info.dli_saddr);
+      symbol = info.dli_sname;
+    }
+
+    uintptr_t rel_pc = offset;
+    const mapinfo_t* mi = (s_map_info != NULL) ? mapinfo_find(s_map_info, frames[i], &rel_pc) : NULL;
+    const char* soname = (mi != NULL) ? mi->name : info.dli_fname;
+    if (soname == NULL) {
+      soname = "<unknown>";
+    }
+    if (symbol != NULL) {
+      // TODO: we might need a flag to say whether it's safe to allocate (demangling allocates).
+      char* demangled_symbol = __cxa_demangle(symbol, NULL, NULL, NULL);
+      const char* best_name = (demangled_symbol != NULL) ? demangled_symbol : symbol;
+
+      fprintf(fp, "          #%02zd  pc %" PAD_PTR "  %s (%s+%" PRIuPTR ")\n",
+                        i, rel_pc, soname, best_name, frames[i] - offset);
+
+      free(demangled_symbol);
+    } else {
+      fprintf(fp, "          #%02zd  pc %" PAD_PTR "  %s\n",
+                        i, rel_pc, soname);
+    }
+  }
+}
+#endif
 
 static FILE* heapsnap_getfile()
 {
@@ -111,7 +243,7 @@ static bool get_malloc_info(hs_malloc_leak_info_t* leak_info)
     }
 #endif
 
-    if (leak_info->buffer == nullptr || leak_info->overall_size == 0 || leak_info->info_size == 0
+    if (leak_info->buffer == NULL || leak_info->overall_size == 0 || leak_info->info_size == 0
             || (leak_info->overall_size / leak_info->info_size) == 0) {
         return false;
     }
@@ -161,6 +293,7 @@ static int compareHeapRecords(const void* vrec1, const void* vrec2)
     return 0;
 }
 
+#if (PLATFORM_SDK_VERSION>=24 || PLATFORM_SDK_VERSION<=27)
 static void merge_similar_entries(hs_malloc_leak_info_t *leak_info)
 {
     size_t recordCount = leak_info->overall_size/leak_info->info_size;
@@ -196,6 +329,7 @@ static void merge_similar_entries(hs_malloc_leak_info_t *leak_info)
     }
     leak_info->overall_size = count * leak_info->info_size;
 }
+#endif
 
 static void demangle_and_save(hs_malloc_leak_info_t *leak_info, FILE* fp)
 {
@@ -205,7 +339,7 @@ static void demangle_and_save(hs_malloc_leak_info_t *leak_info, FILE* fp)
     gNumBacktraceElements = leak_info->backtrace_size;
     qsort(leak_info->buffer, recordCount, leak_info->info_size, compareHeapRecords);
 
-#if (PLATFORM_SDK_VERSION>=24 || PLATFORM_SDK_VERSION<=27)
+#if (PLATFORM_SDK_VERSION>=24 && PLATFORM_SDK_VERSION<=27)
     merge_similar_entries(leak_info);
     info_log("merge similar entries: %zu -> %zu\n", recordCount,
             leak_info->overall_size/leak_info->info_size);
@@ -219,6 +353,9 @@ static void demangle_and_save(hs_malloc_leak_info_t *leak_info, FILE* fp)
     fprintf(fp, "\n");
 
     /* dump the entries to the file */
+#if (PLATFORM_SDK_VERSION<24)
+    s_map_info = mapinfo_create(myPid);
+#endif
     const uint8_t* ptr = leak_info->buffer;
     for (size_t idx = 0; idx < recordCount; idx++) {
         size_t size = *(size_t*) ptr;
@@ -234,21 +371,23 @@ static void demangle_and_save(hs_malloc_leak_info_t *leak_info, FILE* fp)
             if (backtrace[bt] == 0) {
                 break;
             } else {
-#ifdef __LP64__
-                fprintf(fp, " %016" PRIxPTR, backtrace[bt]);
-#else
-                fprintf(fp, " %08" PRIxPTR, backtrace[bt]);
-#endif
+                fprintf(fp, " %" PAD_PTR, backtrace[bt]);
             }
         }
         fprintf(fp, "\n");
 
+#if (PLATFORM_SDK_VERSION<24)
+        dump_backtrace_symbols(fp, backtrace, bt);
+#else
         std::string str = backtrace_string(backtrace, bt);
         fprintf(fp, "%s\n", str.c_str());
+#endif
 
         ptr += leak_info->info_size;
     }
-
+#if (PLATFORM_SDK_VERSION<24)
+    mapinfo_destroy(s_map_info);
+#endif
     fprintf(fp, "MAPS\n");
     const char* maps = "/proc/self/maps";
     FILE* fp_in = fopen(maps, "r");

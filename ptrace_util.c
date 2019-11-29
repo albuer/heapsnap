@@ -183,11 +183,11 @@ int ptrace_getregs(pid_t pid, const struct pt_regs * regs) {
     long regset = NT_PRSTATUS;
     struct iovec ioVec;
 
-    ioVec.iov_base = regs;
+    ioVec.iov_base = (void*)regs;
     ioVec.iov_len = sizeof(*regs);
     if (ptrace(PTRACE_GETREGSET, pid, (void*)regset, &ioVec) < 0) {
         perror("ptrace_getregs: Can not get register values");
-        printf(" io %llx, %d", ioVec.iov_base, ioVec.iov_len);
+        printf(" io %p, %lu", ioVec.iov_base, ioVec.iov_len);
         return -1;
     }
 #else
@@ -205,7 +205,7 @@ int ptrace_setregs(pid_t pid, const struct pt_regs * regs) {
     long regset = NT_PRSTATUS;
     struct iovec ioVec;
 
-    ioVec.iov_base = regs;
+    ioVec.iov_base = (void*)regs;
     ioVec.iov_len = sizeof(*regs);
     if (ptrace(PTRACE_SETREGSET, pid, (void*)regset, &ioVec) < 0) {
         perror("ptrace_setregs: Can not get register values");
