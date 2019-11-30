@@ -41,6 +41,7 @@ setprop libc.debug.malloc.options backtrace
 stop;start
 [执行你的应用]
 ```
+可参考文章[Android Libc Debug](https://albuer.github.io/2019/11/30/Android-libc-debug/)
 * 加载动态库
 ```
 /data/local/tmp/heapsnap -p <pid> -l /data/local/tmp/libheapsnap.so
@@ -72,6 +73,8 @@ setprop libc.debug.malloc 1
 stop media
 LD_PRELOAD=/data/local/tmp/libheapsnap.so mediaserver &
 ```
+可参考文章[Android Libc Debug](https://albuer.github.io/2019/11/30/Android-libc-debug/)
+
 也可以配置当前shell的环境变量，避免每次都要在目标进程前加"LD_PRELOAD"前缀
 ```
 export LD_PRELOAD=/data/local/tmp/libheapsnap.so
