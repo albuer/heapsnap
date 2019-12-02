@@ -1,6 +1,6 @@
 # HeapSnap
 
-
+[点此下载](https://github.com/albuer/heapsnap/releases)
 
 ## 1、HeapSnap 是什么
 
