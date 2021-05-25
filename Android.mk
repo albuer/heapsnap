@@ -4,7 +4,8 @@ SNAP_C_FLAGS := -Wno-error
 
 include $(CLEAR_VARS)
 LOCAL_MODULE := heapsnap
-LOCAL_SRC_FILES := inject.c process_util.c ptrace_util.c
+LOCAL_SRC_FILES := src/inject.c src/process_util.c src/ptrace_util.c
+LOCAL_C_INCLUDES := $(LOCAL_PATH)/include/
 LOCAL_SHARED_LIBRARIES := liblog libdl
 LOCAL_CFLAGS := $(SNAP_C_FLAGS)
 LOCAL_CFLAGS += -DPLATFORM_SDK_VERSION=$(PLATFORM_SDK_VERSION)
@@ -12,14 +13,15 @@ include $(BUILD_EXECUTABLE)
 
 include $(CLEAR_VARS)
 LOCAL_MODULE := leak_test
-LOCAL_SRC_FILES := leak_test.c
+LOCAL_SRC_FILES := src/leak_test.c
+LOCAL_C_INCLUDES := $(LOCAL_PATH)/include/
 LOCAL_CFLAGS := $(SNAP_C_FLAGS)
 include $(BUILD_EXECUTABLE)
 
 include $(CLEAR_VARS)
 
-LOCAL_SRC_FILES := libheapsnap/heapsnap.cpp
-LOCAL_C_INCLUDES :=
+LOCAL_SRC_FILES := src/libheapsnap.cpp
+LOCAL_C_INCLUDES := $(LOCAL_PATH)/include/
 LOCAL_MODULE:= libheapsnap
 LOCAL_SHARED_LIBRARIES := liblog libdl
 LOCAL_CFLAGS := $(SNAP_C_FLAGS)
@@ -48,7 +50,8 @@ ifeq ($(TARGET_ARCH),arm64)
 include $(CLEAR_VARS)
 LOCAL_MULTILIB := 32
 LOCAL_MODULE := heapsnap.32
-LOCAL_SRC_FILES := inject.c process_util.c ptrace_util.c
+LOCAL_SRC_FILES := src/inject.c src/process_util.c src/ptrace_util.c
+LOCAL_C_INCLUDES := $(LOCAL_PATH)/include/
 LOCAL_SHARED_LIBRARIES := liblog libdl
 LOCAL_CFLAGS := $(SNAP_C_FLAGS)
 LOCAL_CFLAGS += -DPLATFORM_SDK_VERSION=$(PLATFORM_SDK_VERSION)
@@ -57,7 +60,8 @@ include $(BUILD_EXECUTABLE)
 include $(CLEAR_VARS)
 LOCAL_MULTILIB := 32
 LOCAL_MODULE := leak_test.32
-LOCAL_SRC_FILES := leak_test.c
+LOCAL_SRC_FILES := src/leak_test.c
+LOCAL_C_INCLUDES := $(LOCAL_PATH)/include/
 LOCAL_CFLAGS := $(SNAP_C_FLAGS)
 include $(BUILD_EXECUTABLE)
 
