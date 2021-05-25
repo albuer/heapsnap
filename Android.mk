@@ -19,7 +19,14 @@ LOCAL_CFLAGS := $(SNAP_C_FLAGS)
 include $(BUILD_EXECUTABLE)
 
 include $(CLEAR_VARS)
+LOCAL_MODULE := leak_builtin
+LOCAL_SRC_FILES := src/leak_builtin.c
+LOCAL_C_INCLUDES := $(LOCAL_PATH)/include/
+LOCAL_SHARED_LIBRARIES := libheapsnap
+LOCAL_CFLAGS := $(SNAP_C_FLAGS)
+include $(BUILD_EXECUTABLE)
 
+include $(CLEAR_VARS)
 LOCAL_SRC_FILES := src/libheapsnap.cpp
 LOCAL_C_INCLUDES := $(LOCAL_PATH)/include/
 LOCAL_MODULE:= libheapsnap
@@ -62,6 +69,15 @@ LOCAL_MULTILIB := 32
 LOCAL_MODULE := leak_test.32
 LOCAL_SRC_FILES := src/leak_test.c
 LOCAL_C_INCLUDES := $(LOCAL_PATH)/include/
+LOCAL_CFLAGS := $(SNAP_C_FLAGS)
+include $(BUILD_EXECUTABLE)
+
+include $(CLEAR_VARS)
+LOCAL_MULTILIB := 32
+LOCAL_MODULE := leak_builtin.32
+LOCAL_SRC_FILES := src/leak_builtin.c
+LOCAL_C_INCLUDES := $(LOCAL_PATH)/include/
+LOCAL_SHARED_LIBRARIES := libheapsnap
 LOCAL_CFLAGS := $(SNAP_C_FLAGS)
 include $(BUILD_EXECUTABLE)
 
