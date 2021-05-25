@@ -21,7 +21,7 @@
 #endif
 
 #define TAG                         "heapsnap"
-#define VERION                      "v1.0"
+#define VERION                      "v1.1"
 #define DEFAULT_HEAPSNAP_SIG        SIGTTIN
 #define HEPA_SNAP_PATH              "/data/local/tmp/heap_snap"
 
