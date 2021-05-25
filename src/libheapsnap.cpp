@@ -23,7 +23,7 @@
 #define TAG                         "heapsnap"
 #define VERION                      "v1.0"
 #define DEFAULT_HEAPSNAP_SIG        SIGTTIN
-#define HEPA_SNAP_PATH              "/sdcard/heap_snap"
+#define HEPA_SNAP_PATH              "/data/local/tmp/heap_snap"
 
 #define HEAPSNAP_DEBUG
 
