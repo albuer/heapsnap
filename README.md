@@ -27,12 +27,11 @@
 
 * 把heapsnap和libheapsnap.so推送到机器（程序也可以推送到其它目录下）
 ```shell
+adb shell chmod 0777 /data/local/tmp
 adb push libheapsnap/libheapsnap.so /data/local/tmp/libheapsnap.so
 adb shell chmod 0644 /data/local/tmp/libheapsnap.so
 adb push heapsnap /data/local/tmp/heapsnap
 adb shell chmod 0755 /data/local/tmp/heapsnap
-adb shell mkdir -p /data/local/tmp/heap_snap
-adb shell chmod 0777 /data/local/tmp/heap_snap
 ```
 * 通过adb或者串口登陆目标机器，开启malloc调试，并重启目标进程
 ```shell
@@ -46,7 +45,7 @@ stop;start
 ```
 /data/local/tmp/heapsnap -p <pid> -l /data/local/tmp/libheapsnap.so
 ```
-* 通过signal 21获取目标进程的heap信息，并自动保存在/sdcard/heap_snap/目录下  
+* 通过signal 21获取目标进程的heap信息，并自动保存在/data/local/tmp/heap_snap目录下  
 	```
 	kill -21 [pid]
 	```
@@ -55,16 +54,15 @@ stop;start
 ```
 /data/local/tmp/heapsnap -p <pid> -l /data/local/tmp/libheapsnap.so -o -f heapsnap_save
 ```
-获取到的heap信息保存在： /sdcard/heap_snap/ 目录下
+获取到的heap信息保存在： /data/local/tmp/heap_snap 目录下
 对于已经加载库的进程，也可以这么调用获取heap信息．
 
 ### 2.2 LD_PRELOAD加载动态库
 * 把libheapsnap.so推送到机器
 ```shell
+adb shell chmod 0777 /data/local/tmp
 adb push libheapsnap/libheapsnap.so /data/local/tmp/libheapsnap.so
 adb shell chmod 0644 /data/local/tmp/libheapsnap.so
-adb shell mkdir -p /data/local/tmp/heap_snap
-adb shell chmod 0777 /data/local/tmp/heap_snap
 ```
 
 * 通过adb或者串口登陆目标机器，开启malloc调试，并重启目标进程(以mediaserver为例)
@@ -90,7 +88,7 @@ kill -21 [pid]
 
 ### 2.3 目标程序编译时候链接动态库
 
-在目标程序的编译脚本中加入下面这行即可，重新编译好的程序在启动时候会自动加载libheapsnap.so库。
+在目标程序的编译脚本中加入下面这行，然后在你的程序中调用heapsnap_save()，重新编译好的程序在启动时候会自动链接libheapsnap.so库。
 
 缺点就是需要目标程序的源代码及编译环境。
 
@@ -98,7 +96,7 @@ kill -21 [pid]
 LOCAL_SHARED_LIBRARIES := libheapsnap
 ```
 
-
+可以参考src/leak_builtin.c代码
 
 ## 3、解析backtrace
 
