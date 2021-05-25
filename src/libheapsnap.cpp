@@ -14,7 +14,9 @@
 #include <malloc_debug/backtrace.h>
 #endif
 
-#if (PLATFORM_SDK_VERSION>=29)
+#if (PLATFORM_SDK_VERSION>=30)
+#include <platform/bionic/malloc.h>
+#elif (PLATFORM_SDK_VERSION>=29)
 #include <bionic_malloc.h>
 #endif
 
